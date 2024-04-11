@@ -6,61 +6,14 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Cart;
+use App\Models\Product;
 
 class CartController extends Controller
 {
-    public function index()
+    public function index($userId)
     {
-        $carts = Cart::with('details')->get();
-
-        $formattedCarts = [];
-        
-        foreach ($carts as $cart) {
-            $total = 0;
-            $discountedTotal = 0;
-            $totalProducts = 0;
-            $totalQuantity = 0;
-            $products = [];
-            
-            foreach ($cart->details as $detail) {
-                $total += $detail->total;
-                $discountedTotal += $detail->discountedPrice ?? $detail->total;
-                $totalQuantity += $detail->quantity;
-                
-                $products[] = [
-                    'id' => $detail->product_id,
-                    'title' => $detail->title,
-                    'price' => $detail->price,
-                    'quantity' => $detail->quantity,
-                    'total' => $detail->total,
-                    'discountPercentage' => $detail->discountPercentage,
-                    'discountedPrice' => $detail->discountedPrice,
-                    'thumbnail' => $detail->thumbnail,
-                ];
-
-                $totalProducts++;
-            }
-            
-            $formattedCarts[] = [
-                'id' => $cart->id,
-                'products' => $products,
-                'total' => number_format($total, 2),
-                'discountedTotal' => number_format($discountedTotal, 2),
-                'userId' => $cart->user_id,
-                'totalProducts' => $totalProducts,
-                'totalQuantity' => $totalQuantity,
-            ];
-        }
-
-        // Add pagination data if needed
-        $response = [
-            'carts' => $formattedCarts,
-            'total' => count($formattedCarts), // Total number of carts
-            'skip' => 0, // You may adjust this based on pagination
-            'limit' => 20 // You may adjust this based on pagination
-        ];
-
-        return response()->json($response);
+        $carts = Cart::where('user_id', $userId)->get();
+        return response()->json(['carts' => $carts], 200);
     }
 
     public function show($id)
@@ -78,7 +31,49 @@ class CartController extends Controller
 
     public function store(Request $request)
     {
-        $cart = Cart::create($request->all());
+        $request->validate([
+            'user_id' => 'required|exists:users,id',
+            'product_id' => 'required|exists:products,id',
+            'quantity' => 'required|integer|min:1',
+        ]);
+    
+        // Find the cart item for the user and product
+        $cart = Cart::where('user_id', $request->user_id)
+                    ->where('product_id', $request->product_id)
+                    ->first();
+    
+        // Fetch product details based on product_id
+        $product = Product::findOrFail($request->product_id);
+    
+        // Calculate discountedPrice if discountPercentage is provided
+        $discountedPrice = ($product->price - ($product->price * $product->discount_percentage / 100)) * $request->quantity;
+    
+        // Calculate total
+        $total = $product->price * $request->quantity;
+    
+        // If cart item exists, update it; otherwise, create a new one
+        if ($cart) {
+            $cart->update([
+                'quantity' => $request->quantity,
+                'total' => $total,
+                'discountPercentage' => $product->discount_percentage ?? null,
+                'discountedPrice' => $discountedPrice,
+            ]);
+        } else {
+            // Create new cart item
+            $cart = Cart::create([
+                'user_id' => $request->user_id,
+                'product_id' => $request->product_id,
+                'title' => $product->title,
+                'price' => $product->price,
+                'quantity' => $request->quantity,
+                'total' => $total,
+                'discountPercentage' => $product->discount_percentage ?? null,
+                'discountedPrice' => $discountedPrice,
+                'thumbnail' => $product->thumbnail ?? null,
+            ]);
+        }
+    
         return response()->json($cart, 201);
     }
 
